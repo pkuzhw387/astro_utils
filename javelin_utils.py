@@ -255,7 +255,7 @@ class javelin_run(object):
 
 
 
-	def lag_stat(self, param_dir='./', model='DRW', redshift=None, tau0=None, cont_band='r', line_band=['g']):
+	def lag_stat(self, param_dir='./', model=None, redshift=None, tau0=None, tau0_err=None, cont_band='r', line_band=['g']):
 		# Function to calculate restframe photo-RM lags from yielded params files.
 		# Parameters:
 		# -------------
@@ -265,13 +265,17 @@ class javelin_run(object):
 		# 
 		# model: str, optional
 		# 		The model used to do photo-RM.
-		# 		Default: 'DRW'
+		# 		Default: None
 		# redshift: array, optional
 		# 		The redshift array of the objects.
 		# 		Default: None
 		# 		
 		# tau0: array, optional
 		# 		The spectroscopic lags array of the objects.
+		# 		Default: None
+		# 
+		# tau0_err: array of shape (2, N), where N is the length of the obj_list. optional
+		# 		The low and up error bars of each tau0
 		# 		Default: None
 		# 
 		# cont_band: str, optional
@@ -288,14 +292,18 @@ class javelin_run(object):
 		if not hasattr(self, 'line_band'):
 			self.line_band = line_band
 
-		self.lag_set = [[]] * len(self.line_band)
+		self.lag_peak_set = [[]] * len(self.line_band)
+		self.lag_cent_set = [[]] * len(self.line_band)
 		self.err_set = [[]] * len(self.line_band)
 		if redshift is None:
 			redshift = np.ones(len(self.obj_list))
+		if model is None:
+			model = self.model
 		zp1 = np.array(redshift) + 1.0
 
+
 		for lb_ind in range(len(self.line_band)):
-			record_path = os.path.join(param_dir, ('lag_estm_%s_band' % self.line_band[lb_ind]))
+			record_path = os.path.join(param_dir, ('lag_estm_%s_band_%s' % (self.line_band[lb_ind], model)))
 			record = open(record_path, 'w')
 			record.write('#All the lags are in the restframe!\n')
 			record.write('#obj_name lag_cent lag_peak lag_std err_up err_low\n')
@@ -318,10 +326,10 @@ class javelin_run(object):
 				dens_grid = KDE.score_samples(lag_grid.reshape(-1,1))
 				dens_grid = np.exp(dens_grid)
 
-				# plt.plot(lag_grid, dens_grid)
-				# fig_path = os.path.join(param_dir, (self.obj_list[ind] + '_' + self.line_band[lb_ind] + '_' + model + 'KDE.png'))
-				# plt.savefig(fig_path)
-				# plt.close()
+				plt.plot(lag_grid, dens_grid)
+				fig_path = os.path.join(param_dir, (self.obj_list[ind] + '_' + self.line_band[lb_ind] + '_' + model + 'KDE.png'))
+				plt.savefig(fig_path)
+				plt.close()
 
 				lag_peak = lag_grid[np.argmax(dens_grid)]
 
@@ -347,17 +355,21 @@ class javelin_run(object):
 							 str(lag_std) + ' ' + str(err_up) + ' ' + str(err_low) + '\n')
 
 
-				self.lag_set[lb_ind].append(lag_cent)
+				self.lag_cent_set[lb_ind].append(lag_cent)
+				self.lag_peak_set[lb_ind].append(lag_peak)
 				self.err_set[lb_ind].append([err_low, err_up])
 
 			record.close()
-		self.lag_set[lb_ind] = np.array(self.lag_set[lb_ind])
+		self.lag_cent_set[lb_ind] = np.array(self.lag_cent_set[lb_ind])
+		self.lag_peak_set[lb_ind] = np.array(self.lag_peak_set[lb_ind])
 		self.err_set[lb_ind] = np.array(self.err_set[lb_ind]).reshape((2, len(self.obj_list)))
-		iden_line = np.linspace(0, 1.5 * np.max(self.lag_set[lb_ind]), 5)
+		iden_line = np.linspace(0, 1.5 * np.max(tau0), 5)
 		plt.plot(iden_line, iden_line, color='black', label=r'$\tau_{JAVELIN}=\tau_{spec}$ line')
-		print "err_shape: ", self.err_set[lb_ind].shape
-		plt.errorbar(x=tau0, y=self.lag_set[lb_ind], yerr=self.err_set[lb_ind],\
-					linewidth=0.0, elinewidth=1, marker='o', color='blue', label=('%s model lags vs. spec lags' % model))
+
+		plt.errorbar(x=tau0, y=self.lag_cent_set[lb_ind], xerr=tau0_err, yerr=self.err_set[lb_ind],\
+					linewidth=0.0, elinewidth=1, marker='o', color='blue', label=('%s model cent lags vs. spec lags' % model))
+		plt.errorbar(x=tau0, y=self.lag_peak_set[lb_ind], xerr=tau0_err, yerr=self.err_set[lb_ind],\
+					linewidth=0.0, elinewidth=1, marker='o', color='red', label=('%s model peak lags vs. spec lags' % model))
 		plt.legend()
 		fig_path = os.path.join(param_dir, (self.line_band[lb_ind] + '_' + model + '_lag_plot.png'))
 		plt.savefig(fig_path)
