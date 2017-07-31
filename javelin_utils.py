@@ -6,6 +6,7 @@ from sklearn.grid_search import GridSearchCV
 from StructFunc import Structure_Function as SF
 from numpy.linalg import LinAlgError
 from matplotlib import pyplot as plt
+from matplotlib import cm
 import pandas as pd
 import os
 
@@ -255,7 +256,7 @@ class javelin_run(object):
 
 
 
-	def lag_stat(self, param_dir='./', model=None, redshift=None, tau0=None, tau0_err=None, cont_band='r', line_band=['g']):
+	def lag_stat(self, param_dir='./', model=None, redshift=None, tau0=None, tau0_err=None, cont_band='r', line_band=['g'], color_coding=None):
 		# Function to calculate restframe photo-RM lags from yielded params files.
 		# Parameters:
 		# -------------
@@ -285,6 +286,10 @@ class javelin_run(object):
 		# line_band: list of str, optional
 		# 		Name of the line bands.
 		# 		Default: ['g']
+		# 		
+		# color_coding: array, optional
+		# 		The property to be color mapped.
+		# 		Default: None
 		# 		
 		# 		
 		if not hasattr(self, 'cont_band'):
@@ -368,12 +373,30 @@ class javelin_run(object):
 
 		plt.errorbar(x=tau0, y=self.lag_cent_set[lb_ind], xerr=tau0_err, yerr=self.err_set[lb_ind],\
 					linewidth=0.0, elinewidth=1, marker='o', color='blue', label=('%s model cent lags vs. spec lags' % model))
-		plt.errorbar(x=tau0, y=self.lag_peak_set[lb_ind], xerr=tau0_err, yerr=self.err_set[lb_ind],\
-					linewidth=0.0, elinewidth=1, marker='o', color='red', label=('%s model peak lags vs. spec lags' % model))
+		# plt.errorbar(x=tau0, y=self.lag_peak_set[lb_ind], xerr=tau0_err, yerr=self.err_set[lb_ind],\
+		# 			linewidth=0.0, elinewidth=1, marker='o', color='red', label=('%s model peak lags vs. spec lags' % model))
 		plt.legend()
+		plt.xlabel(r'$\tau_{spec}$/day', fontsize=20)
+		plt.ylabel(r'$\tau_{photo}$/day', fontsize=20)
+
 		fig_path = os.path.join(param_dir, (self.line_band[lb_ind] + '_' + model + '_lag_plot.png'))
 		plt.savefig(fig_path)
 		plt.close()
+
+
+		if color_coding is not None:
+			plt.plot(iden_line, iden_line, color='black', label=r'$\tau_{JAVELIN}=\tau_{spec}$ line')
+
+			plt.scatter(x=tau0, y=self.lag_cent_set[lb_ind], c=color_coding, cmap=cm.jet, label=('%s model cent lags vs. spec lags' % model))
+			# plt.scatter(x=tau0, y=self.lag_peak_set[lb_ind], c=color_coding, cmap=cm.jet, label=('%s model peak lags vs. spec lags' % model))
+			# plt.legend()
+			plt.xlabel(r'$\tau_{spec}$/day', fontsize=20)
+			plt.ylabel(r'$\tau_{photo}$/day', fontsize=20)
+			cbar = plt.colorbar()
+			cbar.set_label('line-to-continuum flux ratio', size=20)
+			fig_path = os.path.join(param_dir, (self.line_band[lb_ind] + '_' + model + '_lag_plot_cmap.png'))
+			plt.savefig(fig_path)
+			plt.close()
 
 
 

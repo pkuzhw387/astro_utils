@@ -60,7 +60,7 @@ Vega_filter_names = ['U', 'B', 'V', 'R', 'I']
 
 
 class Spectra(object):
-	def __init__(self, spec_dir, spec_format='txt', spec_source=None, frame='observer'):
+	def __init__(self, spec_dir, spec_format='txt', spec_source=None, frame='observer', obj_name='qso'):
 		# Spectra object.
 		# Parameters:
 		# -------------------
@@ -78,22 +78,38 @@ class Spectra(object):
 		# 		'restframe' means the wavelengths are in restframe, i.e. divided by (1 + z);
 		# 		'observer' means the wavelengths are not corrected by (1 + z) factor. 
 		# 		default: 'observer'
+		# 		
+		# obj_name: str, optional
+		# 		The name of the object. 
+		# 		Default: 'qso'
 		self.spec_dir = spec_dir
 		self.spec_format = spec_format
 		self.spec_source = spec_source
 		self.frame = frame
+		self.obj_name = obj_name
 		self.unit = {'wav': 'Angstrom'}
 
-	def read_spec(self):
+	def read_spec(self, rescale=1e16):
 		# currently only the 'LAMP' mode is implemented, I will add other modes (for different spectra sources) later on.
+		# Parameters:
+		# -------------
+		# 
+		# rescale: float
+		# 		rescale factor on the flux and flux error value. 
+		# 		Default: 1e16
+		# 	
+		self.fluxes = []
+		self.wavs = []
+		self.errs = []
+		self.rescale = rescale
+		if self.spec_source != 'IDL':
+			self.JD = []
 		if self.spec_source == 'LAMP':
 			self.no_air_mass = ['ic4218', 'mcg6', 'mrk290', 'mrk871']
 			self.unit['flux'] = '10^-15 erg/s/cm^2/A'
 			self.unit['err'] = '10^-15 erg/s/cm^2/A'
 			self.spec_format = 'txt'
-			self.fluxes = []
-			self.wavs = []
-			self.errs = []
+			
 			spec_list = os.listdir(self.spec_dir)
 			for i in range(len(spec_list)):
 				if os.path.splitext(spec_list[i])[1] == '.dat':
@@ -116,9 +132,9 @@ class Spectra(object):
 				self.fluxes.append(np.array(spec_df['flux']))
 				self.errs.append(np.array(spec_df['err']))
 
-			self.wavs = np.array(self.wavs)
-			self.fluxes = np.array(self.fluxes)
-			self.errs = np.array(self.errs)
+
+
+
 
 			# print self.wavs
 			# print self.fluxes
@@ -128,10 +144,7 @@ class Spectra(object):
 			# If the spectra come from IDL, then it is already fitted.
 			self.spec_format = 'fits'
 			self.spec_list = []
-			self.wavs = []
-			self.fluxes = []
 			self.line_fluxes = []
-			self.errs = []
 			self.line_errs = []
 
 			raw_spec_list = os.listdir(self.spec_dir)
@@ -146,6 +159,7 @@ class Spectra(object):
 					wave = spec_data[1].data['WAVE'][0]
 					self.wavs.append(wave)
 					self.fluxes.append(spec_data[1].data['FLUX'][0])
+					print "max flux: ", np.max(spec_data[1].data['FLUX'][0])
 					self.errs.append(spec_data[1].data['ERR'][0])
 
 					self.f0, self.alpha = spec_data[1].data['CONTI_FIT'][0][0:2]
@@ -159,21 +173,69 @@ class Spectra(object):
 					MgII_sigma = [params[26 + 3*i] for i in range(3)]
 
 					for i in range(3):
+						# Hb
 						line_flux = gauss(np.log(wave), params[24 + 3 * i : 27 + 3 * i])
-						line_flux = gauss(np.log(wave), params[24 + 3 * i : 27 + 3 * i])
+						# MgII
+						line_flux = line_flux + gauss(np.log(wave), params[42 + 3 * i : 45 + 3 * i])
+						# Ha
+						line_flux = line_flux + gauss(np.log(wave), params[3 * i : 3 + 3 * i])
 						line_var = line_err2(np.log(wave), params[24 + 3 * i : 27 + 3 * i], params_err[24 + 3 * i : 27 + 3 * i], line_flux)
 						tot_line_flux += line_flux
 						tot_line_err += line_var
 					tot_line_err = tot_line_err**0.5
 
+					plt.plot(wave, tot_line_flux, color='red')
+					plt.plot(wave, self.fluxes[-1], color='red')
+					plt.show()
+
 					self.line_fluxes.append(tot_line_flux)
 					self.line_errs.append(tot_line_err)
 			self.nepoch = len(self.spec_list)
-			self.wavs = np.array(self.wavs)
-			self.fluxes = np.array(self.fluxes)
-			self.errs = np.array(self.fluxes)
-			self.line_fluxes = np.array(self.line_fluxes)
-			self.line_errs = np.array(self.line_errs)
+			self.line_fluxes = np.array(self.line_fluxes) * rescale
+			self.line_errs = np.array(self.line_errs) * rescale
+
+		elif self.spec_source == 'IHEP':
+			self.nepoch = 0
+			spec_list = np.array(os.listdir(self.spec_dir))
+			for ind in range(len(spec_list)):
+				if os.path.splitext(spec_list[ind])[1] != '.fits':
+					continue
+				fits_path = os.path.join(self.spec_dir, spec_list[ind])
+				spec_data = fits.open(fits_path)
+				flux = np.array(spec_data[0].data[0]) * rescale
+				err = np.array(spec_data[0].data[1]) * rescale
+				wav_begin = spec_data[0].header['CRVAL1']
+				wav_end = (len(flux) - 1) * spec_data[0].header['CD1_1'] + wav_begin
+				wav = np.linspace(wav_begin, wav_end, len(flux))
+				self.nepoch += 1
+				self.JD.append(spec_data[0].header['JULDAY'])
+				self.wavs.append(wav)
+				self.fluxes.append(flux)
+				self.errs.append(err)
+			self.JD = np.array(self.JD)
+
+		elif self.spec_source == 'AGNwatch':
+			self.unit['flux'] = 'ergs/s/cm^2/A'
+			self.unit['err'] = 'ergs/s/cm^2/A'
+			self.nepoch = 0
+			ref_path = os.path.join(self.spec_dir, 'time_ref.txt')
+			time_ref = pd.read_csv(ref_path, header=None, names=['filename', 'JD'], delim_whitespace=True,\
+								   usecols=[0, 1], dtype={'filename': str, 'JD': np.float64})
+			for ind, file in enumerate(time_ref['filename']):
+				self.JD.append(time_ref['JD'][ind])
+				spec_data = pd.read_csv(os.path.join(self.spec_dir, file), header=None,\
+										names=['wav', 'flux', 'err'], delim_whitespace=True,\
+										usecols=[0,1,2], dtype=np.float64)
+				self.wavs.append(np.array(spec_data['wav']))
+				self.fluxes.append(np.array(spec_data['flux']))
+				self.errs.append(np.array(spec_data['err']))
+				self.nepoch += 1
+			self.JD = np.array(self.JD)
+
+		self.wavs = np.array(self.wavs)
+		self.fluxes = np.array(self.fluxes) * rescale
+		self.errs = np.array(self.errs) * rescale
+
 
 	def mean_calc(self):
 		# Function to calculate rms and mean spectra. 
@@ -240,16 +302,26 @@ class Spectra(object):
 		# 		'line': only line
 		
 
+
 		if mode == 'total':
 			# spectra interpolation
-			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i], kind='nearest') for i in range(self.nepoch)]
-			self.interp_errs = [interp1d(self.wavs[i], self.errs[i], kind='nearest') for i in range(self.nepoch)]
-			self.interp_vars = [interp1d(self.wavs[i], self.errs[i]**2, kind='nearest') for i in range(self.nepoch)]
+			
+			# self.ind_ranges = [np.where(abs(self.fluxes[i]) > 1e-5) for i in range(self.nepoch)]
+			# print self.ind_ranges
+
+			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i], kind='linear') for i in range(self.nepoch)]
+			self.interp_errs = [interp1d(self.wavs[i], self.errs[i], kind='linear') for i in range(self.nepoch)]
+			self.interp_vars = [interp1d(self.wavs[i], self.errs[i]**2, kind='linear') for i in range(self.nepoch)]
 		elif mode == 'line':
-			self.interp_fluxes = [interp1d(self.wavs[i], self.line_fluxes[i], kind='nearest') for i in range(self.nepoch)]
-			self.interp_errs = [interp1d(self.wavs[i], self.line_errs[i], kind='nearest') for i in range(self.nepoch)]
+			# self.ind_ranges = [np.where(abs(self.line_fluxes[i]) > 1e-5) for i in range(self.nepoch)]
+			# print self.wavs[i, self.ind_ranges[i]]
+			self.interp_fluxes = [interp1d(self.wavs[i], self.line_fluxes[i], kind='linear') for i in range(self.nepoch)]
+			self.interp_errs = [interp1d(self.wavs[i], self.line_errs[i], kind='linear') for i in range(self.nepoch)]
+			# self.interp_fluxes = [interp1d(self.wavs[i, self.ind_ranges[i]][0], self.line_fluxes[i, self.ind_ranges[i]][0], kind='linear') for i in range(self.nepoch)]
+			# self.interp_errs = [interp1d(self.wavs[i, self.ind_ranges[i]][0], self.line_errs[i, self.ind_ranges[i]][0], kind='linear') for i in range(self.nepoch)]
+		
 		elif mode == 'cont':
-			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i] - self.line_fluxes[i], kind='nearest') for i in range(self.nepoch)]
+			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i] - self.line_fluxes[i], kind='linear') for i in range(self.nepoch)]
 
 
 
@@ -270,7 +342,7 @@ class Spectra(object):
 				filter_path = filter_dir + AB_filter_names[i] + '.txt'
 				filt_data = pd.read_csv(filter_path, header=None, names=['wavelength', 'response'], \
 										usecols=[0, 1], delim_whitespace=True, dtype=np.float64, skiprows=nskip_rows)
-				filter_curve[AB_filter_names[i]] = interp1d(filt_data['wavelength'], filt_data['response'], kind='nearest')
+				filter_curve[AB_filter_names[i]] = interp1d(filt_data['wavelength'], filt_data['response'], kind='linear')
 				if extra_wav_range is not None and AB_filter_names[i] in extra_wav_range.keys():
 					filter_range[AB_filter_names[i]] = [np.max([filt_data['wavelength'][0], extra_wav_range[AB_filter_names[i]][0]]),\
 														np.min([np.array(filt_data['wavelength'])[-1], extra_wav_range[AB_filter_names[i]][-1]])]
@@ -282,6 +354,7 @@ class Spectra(object):
 			self.lc = {}
 
 		for filt in AB_filter_names:
+			print "filter: ", filt
 			if not self.lc.has_key(filt):
 				self.lc[filt] = {}
 
@@ -296,6 +369,11 @@ class Spectra(object):
 					break
 				else:
 					# determine the wave length range used in interpolation. 
+					# if mode == 'line':
+					# 	print self.wavs[i, self.ind_ranges[i]][0][0], self.wavs[i, self.ind_ranges[i]][0][-1]
+					# 	wav_min = np.max([filter_range[filt][0], self.wavs[i, self.ind_ranges[i]][0][0]])
+					# 	wav_max = np.min([filter_range[filt][-1], self.wavs[i, self.ind_ranges[i]][0][-1]])
+					# else:
 					wav_min = np.max([filter_range[filt][0], self.wavs[i][0]])
 					wav_max = np.min([filter_range[filt][-1], self.wavs[i][-1]])
 					tmp_flux = quad(flux_integrand, wav_min, wav_max, args=(self.interp_fluxes[i], filter_curve[filt]))[0] / \
@@ -327,7 +405,7 @@ class Spectra(object):
 			self.lc[filt]['flux_%s' % mode] = np.array(self.lc[filt]['flux_%s' % mode])
 			self.lc[filt]['err_%s' % mode] = np.array(self.lc[filt]['err_%s' % mode])
 
-	def light_curve_record(self, out_dir=None, plot=True):
+	def light_curve_record(self, out_dir=None, plot=True, mode='total'):
 		# Function to record the calculated light curves in txt format.
 		# Parameters:
 		# ------------
@@ -337,25 +415,29 @@ class Spectra(object):
 		# plot: bool, optional
 		# 		Whether to draw and save the light curve plots. 
 		# 		Default: True
+		# 		
+		# mode: str, optional
+		# 		specify the flux of which component is to be recorded. choose from 'total', 'cont' and 'line'. 
+		# 		Default: 'total'
 		if out_dir is None:
 			out_dir = self.spec_dir
 
 		for filt in AB_filter_names:
-			if self.lc[filt]['valid_tag']:
-				out_path = os.path.join(out_dir, (self.obj_name + '_' + filt + '_' + str(self.lc[filt]['valid_tag']) + '.txt'))
-				out_data = np.transpose(np.array([self.lc[filt]['JD'], self.lc[filt]['flux'], self.lc[filt]['err']]))
+			if self.lc[filt]['valid_tag_%s' %mode]:
+				out_path = os.path.join(out_dir, (self.obj_name + '_' + filt + '_' + str(self.lc[filt]['valid_tag_%s' %mode]) + '.txt'))
+				out_data = np.transpose(np.array([self.lc[filt]['JD_%s' % mode], self.lc[filt]['flux_%s' % mode], self.lc[filt]['err_%s' % mode]]))
 				out_df = pd.DataFrame(data=out_data, columns=['JD', 'flux', 'err'])
 				out_df.to_csv(out_path, columns=['JD', 'flux', 'err'], header=None, index=False, sep=' ')
 
 			if plot: 
-				plt.scatter(self.lc[filt]['JD'], self.lc[filt]['flux'], label=filt, s=5)
+				plt.scatter(self.lc[filt]['JD_%s' % mode], self.lc[filt]['flux_%s' % mode], label=filt, s=5)
 
 		out_path = os.path.join(out_dir, (self.obj_name + '_LightCurve.png'))
 		if plot:
 			plt.savefig(out_path)
 			plt.close()
 
-	def ratio_calc(self, tar_line='Hb', rec=True, cont_band='r', line_band='g'):
+	def ratio_calc(self, tar_line='Hb', rec=True, cont_band='r', line_band='g', filter_set='SDSS', extra_wav_range=None):
 		# Function to calculate the line-to-continuum ratio of a given line. Only valid when the spec_source =='IDL'
 		# Parameters:
 		# ------------
@@ -368,9 +450,9 @@ class Spectra(object):
 		
 		
 		# Calculate fluxes of three modes
-		self.light_curve_calc(plot=False, mode='total')
-		self.light_curve_calc(plot=False, mode='line')
-		self.light_curve_calc(plot=False, mode='cont')
+		self.light_curve_calc(plot=False, mode='total', filter_set=filter_set, extra_wav_range=extra_wav_range)
+		self.light_curve_calc(plot=False, mode='line', filter_set=filter_set)
+		self.light_curve_calc(plot=False, mode='cont', filter_set=filter_set, extra_wav_range=extra_wav_range)
 
 		# abort if the light curve is not valid
 		if self.lc[line_band]['valid_tag_line'] == 0 or\
@@ -379,8 +461,10 @@ class Spectra(object):
 		   return
 
 		# calculate the line scale
-		line_scale = self.lc[line_band]['flux_line'] / self.lc[cont_band]['flux_total']
+		line_scale = self.lc[line_band]['flux_line'] / self.lc[cont_band]['flux_cont']
 		alpha = self.lc[line_band]['flux_cont'] / self.lc[cont_band]['flux_total']
+
+		print self.lc[line_band]['flux_line'], self.lc[cont_band]['flux_cont']
 
 
 		self.lc[line_band]['JD_ratio'] = self.lc[line_band]['JD_line']
@@ -390,6 +474,7 @@ class Spectra(object):
 		print "Object: ", self.obj_name
 		print "line_scale is: ", line_scale
 		print "alpha is: ", alpha
+		return line_scale
 
 
 
