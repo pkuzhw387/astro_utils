@@ -311,7 +311,7 @@ class javelin_run(object):
 			record_path = os.path.join(param_dir, ('lag_estm_%s_band_%s' % (self.line_band[lb_ind], model)))
 			record = open(record_path, 'w')
 			record.write('#All the lags are in the restframe!\n')
-			record.write('#obj_name lag_cent lag_peak lag_std err_up err_low\n')
+			record.write('#obj_name lag_cent lag_peak lag_std err_up err_low comparison_with_tau0\n')
 
 			for ind in range(len(self.obj_list)):
 				param_path = os.path.join(param_dir, (self.obj_list[ind] + '_' + model + '_params'))
@@ -347,7 +347,7 @@ class javelin_run(object):
 				lag_cent = 0.5 * (np.min(m1_lag) + np.max(m1_lag))
 				lag_std = (np.max(m2_lag) - np.min(m1_lag)) / (2 * (np.log(2))**0.5)
 
-				print "object: %s, lag_peak=%f, lag_cent=%f\n" %(self.obj_list[ind], lag_peak, lag_cent)
+				print "object: %s, lag_peak=%f, lag_cent=%f, bigger than tau0? " %(self.obj_list[ind], lag_peak, lag_cent), lag_cent > tau0[ind]
 
 				err_up = ((lag_max - lag_cent)**2 + lag_std**2)**0.5 / zp1[ind]
 				err_low = ((lag_min - lag_cent)**2 + lag_std**2)**0.5 / zp1[ind]
@@ -355,9 +355,14 @@ class javelin_run(object):
 				lag_peak = lag_peak / zp1[ind]
 				lag_std = lag_std / zp1[ind]
 
-				record.write(self.obj_list[ind] + ' ' +\
-							 str(lag_cent) + ' ' + str(lag_peak) + ' ' +\
-							 str(lag_std) + ' ' + str(err_up) + ' ' + str(err_low) + '\n')
+				if lag_cent > tau0[ind]:
+					record.write(self.obj_list[ind] + ' ' +\
+								 str(lag_cent) + ' ' + str(lag_peak) + ' ' +\
+								 str(lag_std) + ' ' + str(err_up) + ' ' + str(err_low) + ' ' + 'bigger' + '\n')
+				else:
+					record.write(self.obj_list[ind] + ' ' +\
+								 str(lag_cent) + ' ' + str(lag_peak) + ' ' +\
+								 str(lag_std) + ' ' + str(err_up) + ' ' + str(err_low) + ' ' + 'smaller' + '\n')
 
 
 				self.lag_cent_set[lb_ind].append(lag_cent)

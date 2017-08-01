@@ -104,6 +104,7 @@ class Spectra(object):
 		self.rescale = rescale
 		if self.spec_source != 'IDL':
 			self.JD = []
+		
 		if self.spec_source == 'LAMP':
 			self.no_air_mass = ['ic4218', 'mcg6', 'mrk290', 'mrk871']
 			self.unit['flux'] = '10^-15 erg/s/cm^2/A'
@@ -231,6 +232,23 @@ class Spectra(object):
 				self.errs.append(np.array(spec_data['err']))
 				self.nepoch += 1
 			self.JD = np.array(self.JD)
+
+		elif self.spec_source == 'SDSS-RM':
+			spec_path = os.path.join(self.spec_dir, ('spectrum_rmid_%s_right.fits' %self.obj_name))
+			spec_data = fits.open(spec_path)
+
+			MJD = spec_data[1].data['MJD']
+			logwavbinsize=0.0001
+			naxis1=4648
+			logwav0=3.552230
+			logwav=np.arange(logwav0,logwav0+logwavbinsize*(naxis1-1),logwavbinsize)
+			wav=10**(logwav)
+
+			for single_flux in spec_data[1].data['FLUX']:
+				self.wavs.append(wav)
+				self.fluxes.append(single_flux)
+			for single_ivar in spec_data[1].data['IVAR']:
+				self.errs.append(np.array(single_ivar)**(-0.5))
 
 		self.wavs = np.array(self.wavs)
 		self.fluxes = np.array(self.fluxes) * rescale
