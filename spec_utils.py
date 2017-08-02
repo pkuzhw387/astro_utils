@@ -234,42 +234,113 @@ class Spectra(object):
 			self.JD = np.array(self.JD)
 
 		elif self.spec_source == 'SDSS-RM':
+			
 			spec_path = os.path.join(self.spec_dir, ('spectrum_rmid_%s_right.fits' %self.obj_name))
 			spec_data = fits.open(spec_path)
 
 			MJD = spec_data[1].data['MJD']
+			self.masks = np.array(spec_data[1].data['ANDMASK'])
+			self.JD = MJD
 			logwavbinsize=0.0001
 			naxis1=4648
 			logwav0=3.552230
 			logwav=np.arange(logwav0,logwav0+logwavbinsize*(naxis1-1),logwavbinsize)
 			wav=10**(logwav)
+			self.nepoch = len(spec_data[1].data['FLUX'])
+			mask1 = wav > 5573.524
+			mask2 = wav < 5582.5417
+			mask3 = wav > 5888.8416
+			mask4 = wav < 5901.0579
+			mask5 = wav > 6298.3947
+			mask6 = wav < 6305.6502
 
-			for single_flux in spec_data[1].data['FLUX']:
-				self.wavs.append(wav)
+			for ind in range(self.nepoch):
+				mask7 = self.masks[ind] != 0
+				mask8 = spec_data[1].data['IVAR'][ind] <= 0.0
+				mask = [(mask1[i] and mask2[i]) or (mask3[i] and mask4[i]) or\
+						(mask5[i] and mask6[i]) or mask7[i] or mask8[i] for i in range(len(mask7))]
+
+				this_wav = np.ma.array(wav, mask=mask).compressed()
+				single_flux = np.ma.array(spec_data[1].data['FLUX'][ind], mask=mask).compressed()
+				single_ivar = np.ma.array(spec_data[1].data['IVAR'][ind], mask=mask).compressed()
+
+
+
+				self.wavs.append(this_wav)
 				self.fluxes.append(single_flux)
-			for single_ivar in spec_data[1].data['IVAR']:
-				self.errs.append(np.array(single_ivar)**(-0.5))
+				self.errs.append(single_ivar**(-0.5))
+
 
 		self.wavs = np.array(self.wavs)
 		self.fluxes = np.array(self.fluxes) * rescale
 		self.errs = np.array(self.errs) * rescale
 
 
+
+
 	def mean_calc(self):
 		# Function to calculate rms and mean spectra. 
+		logwavbinsize=0.0001
+		naxis1=4648
+		logwav0=3.552230
+		logwav=np.arange(logwav0,logwav0+logwavbinsize*(naxis1-1),logwavbinsize)
+		wav=10**(logwav)
+
+
+		mean_flux = np.zeros(len(wav))
+		mean_var = np.zeros(len(wav))
+		mean_err = np.zeros(len(wav))
+		rms_flux = np.zeros(len(wav))
+		rms_err = np.zeros(len(wav))
+
+		self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i], kind='quadratic') for i in range(self.nepoch)]
+		self.interp_errs = [interp1d(self.wavs[i], self.errs[i], kind='quadratic') for i in range(self.nepoch)]
+
+		for i in range(len(mean_flux)):
+			add_count = 0
+			for j in range(len(self.interp_fluxes)):
+				try:
+					mean_flux[i] += self.interp_fluxes[j](wav[i])
+					rms_flux[i] += self.interp_fluxes[j](wav[i])**2
+
+					mean_var[i] += self.interp_errs[j](wav[i])**2
+					add_count += 1
+				except ValueError:
+					continue
+			if add_count:
+				mean_flux[i] /= add_count
+				rms_flux[i] /= add_count
+				mean_var[i] /= add_count
+				mean_err[i] = mean_var[i]**(-0.5)
+				rms_err[i] = mean_flux[i] / rms_flux[i] * add_count * mean_err[i]
+			else:
+				continue
+
+
+		mean_err = mean_var**(-0.5)
+
+		mean_mask1 = mean_flux == 0
+		mean_mask2 = np.isfinite(1 / mean_err) == False
+		rms_mask1 = rms_flux == 0
+		rms_mask2 = np.isfinite(1 / rms_err) == False
+
+		mean_mask = [mean_mask1[i] or mean_mask2[i] for i in range(len(mean_mask1))]
+		rms_mask = [rms_mask1[i] or rms_mask2[i] for i in range(len(rms_mask1))]
+
 		
+
 		# rms calculation
 		self.rms = {}
-		print "waves: ", self.wavs
-		self.rms['wav'] = self.wavs[0, :]
-		self.rms['flux'] = np.mean(self.fluxes**2, axis=0)**0.5
-		self.rms['err'] = np.sum(abs(self.fluxes) * self.errs, axis=0) / self.rms['flux'] / self.fluxes.shape[0]
+		# print "waves: ", self.wavs
+		self.rms['wav'] = np.ma.array(wav, mask=rms_mask).compressed()
+		self.rms['flux'] = np.ma.array(rms_flux, mask=rms_mask).compressed()
+		self.rms['err'] = np.ma.array(rms_err, mask=rms_mask).compressed()
 		
 		# mean calculation
 		self.mean = {}
-		self.mean['wav'] =  self.wavs[0, :]
-		self.mean['flux'] = np.mean(self.fluxes, axis=0)
-		self.mean['err'] = np.mean(self.errs**2, axis=0)**0.5
+		self.mean['wav'] = np.ma.array(wav, mask=mean_mask).compressed()
+		self.mean['flux'] = np.ma.array(mean_flux, mask=mean_mask).compressed()
+		self.mean['err'] = np.ma.array(mean_err, mask=mean_mask).compressed()
 
 	def mean_record(self, out_dir=None, plot=True):
 		# Function to write rms and mean spectra to .txt files
@@ -327,19 +398,19 @@ class Spectra(object):
 			# self.ind_ranges = [np.where(abs(self.fluxes[i]) > 1e-5) for i in range(self.nepoch)]
 			# print self.ind_ranges
 
-			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i], kind='linear') for i in range(self.nepoch)]
-			self.interp_errs = [interp1d(self.wavs[i], self.errs[i], kind='linear') for i in range(self.nepoch)]
-			self.interp_vars = [interp1d(self.wavs[i], self.errs[i]**2, kind='linear') for i in range(self.nepoch)]
+			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i], kind='quadratic') for i in range(self.nepoch)]
+			self.interp_errs = [interp1d(self.wavs[i], self.errs[i], kind='quadratic') for i in range(self.nepoch)]
+			self.interp_vars = [interp1d(self.wavs[i], self.errs[i]**2, kind='quadratic') for i in range(self.nepoch)]
 		elif mode == 'line':
 			# self.ind_ranges = [np.where(abs(self.line_fluxes[i]) > 1e-5) for i in range(self.nepoch)]
 			# print self.wavs[i, self.ind_ranges[i]]
-			self.interp_fluxes = [interp1d(self.wavs[i], self.line_fluxes[i], kind='linear') for i in range(self.nepoch)]
-			self.interp_errs = [interp1d(self.wavs[i], self.line_errs[i], kind='linear') for i in range(self.nepoch)]
-			# self.interp_fluxes = [interp1d(self.wavs[i, self.ind_ranges[i]][0], self.line_fluxes[i, self.ind_ranges[i]][0], kind='linear') for i in range(self.nepoch)]
-			# self.interp_errs = [interp1d(self.wavs[i, self.ind_ranges[i]][0], self.line_errs[i, self.ind_ranges[i]][0], kind='linear') for i in range(self.nepoch)]
+			self.interp_fluxes = [interp1d(self.wavs[i], self.line_fluxes[i], kind='quadratic') for i in range(self.nepoch)]
+			self.interp_errs = [interp1d(self.wavs[i], self.line_errs[i], kind='quadratic') for i in range(self.nepoch)]
+			# self.interp_fluxes = [interp1d(self.wavs[i, self.ind_ranges[i]][0], self.line_fluxes[i, self.ind_ranges[i]][0], kind='quadratic') for i in range(self.nepoch)]
+			# self.interp_errs = [interp1d(self.wavs[i, self.ind_ranges[i]][0], self.line_errs[i, self.ind_ranges[i]][0], kind='quadratic') for i in range(self.nepoch)]
 		
 		elif mode == 'cont':
-			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i] - self.line_fluxes[i], kind='linear') for i in range(self.nepoch)]
+			self.interp_fluxes = [interp1d(self.wavs[i], self.fluxes[i] - self.line_fluxes[i], kind='quadratic') for i in range(self.nepoch)]
 
 
 
@@ -360,7 +431,7 @@ class Spectra(object):
 				filter_path = filter_dir + AB_filter_names[i] + '.txt'
 				filt_data = pd.read_csv(filter_path, header=None, names=['wavelength', 'response'], \
 										usecols=[0, 1], delim_whitespace=True, dtype=np.float64, skiprows=nskip_rows)
-				filter_curve[AB_filter_names[i]] = interp1d(filt_data['wavelength'], filt_data['response'], kind='linear')
+				filter_curve[AB_filter_names[i]] = interp1d(filt_data['wavelength'], filt_data['response'], kind='quadratic')
 				if extra_wav_range is not None and AB_filter_names[i] in extra_wav_range.keys():
 					filter_range[AB_filter_names[i]] = [np.max([filt_data['wavelength'][0], extra_wav_range[AB_filter_names[i]][0]]),\
 														np.min([np.array(filt_data['wavelength'])[-1], extra_wav_range[AB_filter_names[i]][-1]])]
@@ -443,7 +514,18 @@ class Spectra(object):
 		for filt in AB_filter_names:
 			if self.lc[filt]['valid_tag_%s' %mode]:
 				out_path = os.path.join(out_dir, (self.obj_name + '_' + filt + '_' + str(self.lc[filt]['valid_tag_%s' %mode]) + '.txt'))
-				out_data = np.transpose(np.array([self.lc[filt]['JD_%s' % mode], self.lc[filt]['flux_%s' % mode], self.lc[filt]['err_%s' % mode]]))
+				mask1 = (self.lc[filt]['err_%s' %mode] ) / (self.lc[filt]['flux_%s' %mode]) > 0.5 
+				print mask1
+				mask2 = np.isfinite(self.lc[filt]['err_%s' %mode]) == False
+
+				mask = [mask1[i] or mask2[i] for i in range(len(mask1))]
+				JD = np.ma.array(self.lc[filt]['JD_%s' % mode], mask=mask).compressed()
+				flux = np.ma.array(self.lc[filt]['flux_%s' % mode], mask=mask).compressed()
+				err = np.ma.array(self.lc[filt]['err_%s' % mode], mask=mask).compressed()
+
+				print JD, flux, err
+
+				out_data = np.transpose(np.array([JD, flux, err]))
 				out_df = pd.DataFrame(data=out_data, columns=['JD', 'flux', 'err'])
 				out_df.to_csv(out_path, columns=['JD', 'flux', 'err'], header=None, index=False, sep=' ')
 
